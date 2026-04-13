@@ -4,7 +4,7 @@ on:
   # 定时触发：每天北京时间早上8点运行（UTC时间0点）
   schedule:
     - cron: '0 0 * * *'
-  # 支持手动触发
+  # 支持手动触发测试
   workflow_dispatch:
 
 jobs:
@@ -13,26 +13,31 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
-        
-      - name: 设置Python
+        with:
+          fetch-depth: 0
+
+      - name: 设置Python环境
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
-          
+
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          
-      - name: 运行扫描脚本
+
+      - name: 运行职位扫描脚本
         env:
-          # 从GitHub Secrets读取你的钉钉Webhook
+          # 从GitHub Secrets读取配置，禁止写死在代码里
           DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
         run: python job_scanner.py
-        
-      - name: 提交更新后的历史记录
+
+      - name: 自动更新去重历史记录
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: '自动更新去重历史记录'
+          commit_message: '自动更新职位去重历史记录'
           file_pattern: 'history.json'
+          commit_user_name: 'github-actions[bot]'
+          commit_user_email: 'github-actions[bot]@users.noreply.github.com'
