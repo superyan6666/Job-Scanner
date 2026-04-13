@@ -1,5 +1,10 @@
 name: 职位扫描任务
 
+# 并发控制：同一时间只允许一个任务运行，彻底解决并发写入冲突
+concurrency:
+  group: job-scanner
+  cancel-in-progress: false
+
 on:
   # 定时触发：每天北京时间早上8点运行（UTC时间0点）
   schedule:
@@ -32,12 +37,15 @@ jobs:
           # 从GitHub Secrets读取配置，禁止写死在代码里
           DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
           DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+          PROXY_ENABLE: ${{ secrets.PROXY_ENABLE }}
+          HTTP_PROXY: ${{ secrets.HTTP_PROXY }}
+          HTTPS_PROXY: ${{ secrets.HTTPS_PROXY }}
         run: python job_scanner.py
 
-      - name: 自动更新去重历史记录
+      - name: 自动更新去重历史记录和城市配置
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: '自动更新职位去重历史记录'
-          file_pattern: 'history.json'
+          file_pattern: 'history.json city_map.json'
           commit_user_name: 'github-actions[bot]'
           commit_user_email: 'github-actions[bot]@users.noreply.github.com'
