@@ -23,11 +23,9 @@ try:
     import portalocker
     LOCK_ENABLED = True
     LOCK_MODE = "portalocker"
-    print("✅ 已启用portalocker专业跨平台文件锁")
 except ImportError:
     LOCK_ENABLED = True
     LOCK_MODE = "atomic_file"
-    print("⚠️  未检测到portalocker，已启用原子文件锁")
 
 def acquire_lock(file_path: str, exclusive: bool = True) -> Optional[object]:
     if not LOCK_ENABLED:
@@ -39,8 +37,7 @@ def acquire_lock(file_path: str, exclusive: bool = True) -> Optional[object]:
             lock_file = open(file_path, file_mode, encoding="utf-8")
             portalocker.lock(lock_file, lock_flag)
             return lock_file
-        except Exception as e:
-            print(f"⚠️  文件锁获取失败: {e}")
+        except Exception:
             return None
     if LOCK_MODE == "atomic_file":
         lock_path = f"{file_path}.lock"
@@ -55,9 +52,7 @@ def acquire_lock(file_path: str, exclusive: bool = True) -> Optional[object]:
                 if e.errno == errno.EEXIST:
                     time.sleep(0.5)
                 else:
-                    print(f"⚠️  原子锁获取异常: {e}")
                     break
-        print(f"❌  原子锁获取失败，已重试{max_retry}次")
         return None
 
 def release_lock(lock_obj: Optional[object]):
@@ -78,36 +73,29 @@ def release_lock(lock_obj: Optional[object]):
             pass
         return
 
-# ==================== 🔧 核心配置区 - 所有自定义修改均在此处 ====================
+# ==================== 🔧 核心配置区 ====================
 CONFIG = {
-    # -------------------------- 基础爬取配置 --------------------------
-    "city_ids": [101250100, 101270100, 101280100, 101280600],  # 成都/重庆/广州/深圳
-    "max_pages": 2,  # 先降为2页，降低反爬概率，调试成功再改回3
-    "request_delay": 4,  # 基础请求间隔增加到4秒，降低反爬
+    "city_ids": [101250100, 101270100, 101280100, 101280600],
+    "max_pages": 2,
+    "request_delay": 4,
     "max_retry": 3,
     "top_n": 15,
-    "debug_mode": True,  # 调试模式，开启后打印关键日志，定位问题
+    "debug_mode": True,
+    "test_mode": os.getenv("TEST_MODE", "false").lower() == "true",  # 新增：测试模式开关
 
-    # -------------------------- 岗位匹配核心配置 --------------------------
-    # 【修复】BOSS搜索用空格分隔关键词，不是逗号，大幅提升搜索命中率
-    "job_keywords": ["财务", "会计"],  # 先简化关键词，调试成功再扩展
-    "exclude_keywords": ["外包", "培训", "猎头", "派遣"],  # 先简化排除词
-    "min_salary": 5000,  # 先降低薪资下限，调试成功再改回10000
+    "job_keywords": ["财务", "会计"],
+    "exclude_keywords": ["外包", "培训", "猎头", "派遣"],
+    "min_salary": 5000,
 
-    # -------------------------- 学历&工作经验筛选配置（先放宽调试） --------------------------
     "education_allow": ["本科", "大专", "硕士"],
     "education_deny": [],
     "experience_allow": ["1-3年", "3-5年", "经验不限"],
     "experience_deny": ["应届毕业生"],
 
-    # -------------------------- 钉钉推送配置 --------------------------
     "dingtalk_webhook": os.getenv("DINGTALK_WEBHOOK", ""),
     "dingtalk_secret": os.getenv("DINGTALK_SECRET", ""),
 
-    # -------------------------- 代理配置 --------------------------
     "proxy_enable": os.getenv("PROXY_ENABLE", "false").lower() == "true",
-
-    # -------------------------- 城市映射配置 --------------------------
     "city_map_file": "city_map.json",
     "auto_fetch_city_map": False,
 }
@@ -124,9 +112,7 @@ UA_POOL = [
 
 ANTI_CRAWL_KEYWORDS = ["安全验证", "异常访问", "请完成以下验证", "IP地址存在异常", "访问过于频繁", "请登录"]
 
-# 【核心修复】2026年最新BOSS直聘解析规则，优先用最稳定的业务属性，放弃易变的class
 BOSS_PARSE_RULES = {
-    # 最高优先级：带data-jobid的li，这个是BOSS岗位的唯一标识，永远不会改
     "job_list": [
         {"tag": "li", "attrs": {"data-jobid": True}},
         {"tag": "div", "attrs": {"data-jobid": True}},
@@ -172,6 +158,172 @@ SALARY_PATTERNS = {
 }
 
 DINGTALK_MAX_LENGTH = 3800
+
+# ==================== 🧪 测试排错模块（新增核心功能） ====================
+class Tester:
+    """独立测试排错类，负责配置校验、钉钉推送测试、全链路排错"""
+    
+    @staticmethod
+    def validate_config() -> Tuple[bool, List[str]]:
+        """
+        配置自动校验
+        :return: (是否通过, 错误/警告信息列表)
+        """
+        passed = True
+        messages = []
+
+        # 1. 检查钉钉Webhook配置
+        if not CONFIG["dingtalk_webhook"]:
+            passed = False
+            messages.append("❌ 【严重】未配置DINGTALK_WEBHOOK环境变量")
+        else:
+            if "oapi.dingtalk.com" not in CONFIG["dingtalk_webhook"]:
+                passed = False
+                messages.append("❌ 【严重】DINGTALK_WEBHOOK格式错误，必须包含oapi.dingtalk.com")
+            else:
+                messages.append("✅ 钉钉Webhook配置格式正确")
+
+        # 2. 检查钉钉加签配置（如果有）
+        if CONFIG["dingtalk_secret"]:
+            if len(CONFIG["dingtalk_secret"]) < 20:
+                messages.append("⚠️  【警告】DINGTALK_SECRET长度异常，可能配置错误")
+            else:
+                messages.append("✅ 钉钉加签密钥配置正确")
+        else:
+            messages.append("ℹ️  未配置钉钉加签密钥（如果机器人开启了加签，必须配置）")
+
+        # 3. 检查城市配置
+        if not CONFIG["city_ids"]:
+            passed = False
+            messages.append("❌ 【严重】未配置目标城市")
+        else:
+            messages.append(f"✅ 目标城市配置正确：{len(CONFIG['city_ids'])}个城市")
+
+        # 4. 检查关键词配置
+        if not CONFIG["job_keywords"]:
+            passed = False
+            messages.append("❌ 【严重】未配置岗位关键词")
+        else:
+            messages.append(f"✅ 岗位关键词配置正确：{CONFIG['job_keywords']}")
+
+        # 5. 检查依赖库
+        try:
+            import requests
+            import bs4
+            import lxml
+            messages.append("✅ 所有依赖库已正确安装")
+        except ImportError as e:
+            passed = False
+            messages.append(f"❌ 【严重】依赖库缺失：{e}")
+
+        return passed, messages
+
+    @staticmethod
+    def generate_test_jobs() -> List[Dict]:
+        """生成测试用的模拟岗位数据，用于测试钉钉推送"""
+        return [
+            {
+                "id": "test_001",
+                "job_name": "测试岗位-高级财务经理",
+                "company": "字节跳动（测试）",
+                "salary_str": "30-50K·14薪",
+                "salary": 40000,
+                "city": "成都",
+                "experience": "3-5年",
+                "education": "本科",
+                "welfare": "五险一金 周末双休 年终奖 股票期权",
+                "link": "https://www.zhipin.com/"
+            },
+            {
+                "id": "test_002",
+                "job_name": "测试岗位-财务分析师",
+                "company": "阿里巴巴（测试）",
+                "salary_str": "20-35K·16薪",
+                "salary": 30000,
+                "city": "重庆",
+                "experience": "1-3年",
+                "education": "硕士",
+                "welfare": "六险一金 弹性工作 免费三餐",
+                "link": "https://www.zhipin.com/"
+            }
+        ]
+
+    @staticmethod
+    def test_dingtalk_push() -> Tuple[bool, str]:
+        """
+        独立测试钉钉推送
+        :return: (是否成功, 结果信息)
+        """
+        if not CONFIG["dingtalk_webhook"]:
+            return False, "未配置DINGTALK_WEBHOOK，无法测试"
+
+        print("\n" + "="*60)
+        print("🧪 开始钉钉推送测试")
+        print("="*60)
+
+        # 生成测试数据
+        test_jobs = Tester.generate_test_jobs()
+        notifier = DingTalkNotifier(CONFIG)
+        
+        try:
+            # 发送测试消息
+            notifier.send(test_jobs, is_test=True)
+            return True, "钉钉推送测试消息已发送，请检查钉钉群"
+        except Exception as e:
+            return False, f"钉钉推送测试失败：{str(e)}"
+
+    @staticmethod
+    def run_full_troubleshooting():
+        """运行全链路排错，打印完整排错报告"""
+        print("\n" + "="*60)
+        print("🔍 开始全链路排错检查")
+        print("="*60)
+
+        # 1. 配置校验
+        print("\n【1/4】配置校验...")
+        config_passed, config_messages = Tester.validate_config()
+        for msg in config_messages:
+            print(f"  {msg}")
+
+        # 2. 环境变量检查
+        print("\n【2/4】环境变量检查...")
+        env_vars = ["DINGTALK_WEBHOOK", "DINGTALK_SECRET", "PROXY_ENABLE", "HTTP_PROXY", "HTTPS_PROXY", "TEST_MODE"]
+        for var in env_vars:
+            value = os.getenv(var, "")
+            if var == "DINGTALK_WEBHOOK" and value:
+                # 隐藏Webhook的关键部分，只显示前缀
+                print(f"  ✅ {var}: {value[:30]}...")
+            elif value:
+                print(f"  ✅ {var}: {value}")
+            else:
+                print(f"  ℹ️  {var}: 未配置")
+
+        # 3. 网络连通性检查
+        print("\n【3/4】网络连通性检查...")
+        test_urls = [
+            ("https://www.zhipin.com", "BOSS直聘"),
+            ("https://oapi.dingtalk.com", "钉钉API")
+        ]
+        session = Session()
+        for url, name in test_urls:
+            try:
+                resp = session.head(url, timeout=5)
+                print(f"  ✅ {name} 网络连通正常 (状态码: {resp.status_code})")
+            except Exception as e:
+                print(f"  ❌ {name} 网络连通失败: {e}")
+
+        # 4. 钉钉推送测试（可选）
+        print("\n【4/4】钉钉推送测试...")
+        if CONFIG["test_mode"]:
+            test_passed, test_msg = Tester.test_dingtalk_push()
+            print(f"  {test_msg}")
+        else:
+            print("  ℹ️  测试模式未开启，跳过钉钉推送测试")
+            print("  💡 提示：在GitHub Actions中选择「测试模式」运行，或设置TEST_MODE=true环境变量")
+
+        print("\n" + "="*60)
+        print("✅ 全链路排错检查完成")
+        print("="*60)
 
 # ==================== 🛠️ 通用工具函数 ====================
 def fuzzy_find_tag(parent: Tag, rules: List[Dict]) -> Optional[Tag]:
@@ -222,15 +374,12 @@ def extract_experience_education(tags: List[str]) -> Tuple[str, str]:
             education = tag_clean
     return experience, education
 
-# 【修复】关闭HEAD请求，改用轻量GET请求，避免被反爬拦截
 def check_link_valid(session: Session, link: str) -> bool:
     if not link:
         return False
-    # 调试模式直接返回True，关闭校验，定位问题
-    if CONFIG["debug_mode"]:
+    if CONFIG["debug_mode"] or CONFIG["test_mode"]:
         return True
     try:
-        # 仅取headers，不下载完整页面，轻量校验
         resp = session.get(link, timeout=3, allow_redirects=True, stream=True)
         resp.close()
         return resp.status_code in [200, 302, 403]
@@ -258,10 +407,10 @@ def fetch_boss_city_map(spider_session: Session) -> Dict[int, str]:
         for city_group in data["zpData"]["cityList"]:
             for city in city_group["subLevelModelList"]:
                 city_map[city["code"]] = city["name"]
-        print(f"✅ 动态拉取到{len(city_map)}个城市数据")
         return city_map
     except Exception as e:
-        print(f"⚠️  动态拉取城市列表失败，使用默认配置: {e}")
+        if CONFIG["debug_mode"]:
+            print(f"⚠️  动态拉取城市列表失败: {e}")
         return default_map
 
 def load_city_map(config: Dict, spider_session: Session) -> Dict[int, str]:
@@ -276,7 +425,8 @@ def load_city_map(config: Dict, spider_session: Session) -> Dict[int, str]:
                 release_lock(lock_obj)
                 return {int(k): v for k, v in city_map.items()}
         except Exception as e:
-            print(f"⚠️  城市映射文件加载失败，使用默认配置: {e}")
+            if CONFIG["debug_mode"]:
+                print(f"⚠️  城市映射文件加载失败: {e}")
             release_lock(lock_obj)
     return {
         101250100: "成都",
@@ -311,7 +461,8 @@ class BossSpider:
                 "https": os.getenv("HTTPS_PROXY", "")
             }
             session.proxies.update(proxies)
-            print("✅ 代理已启用")
+            if CONFIG["debug_mode"]:
+                print("✅ 代理已启用")
         self._refresh_headers(session)
         return session
 
@@ -339,21 +490,18 @@ class BossSpider:
                 resp.raise_for_status()
                 html = resp.text
 
-                # 调试模式：打印页面关键信息，定位问题
                 if self.config["debug_mode"]:
                     print(f"🔍 调试：页面HTML长度：{len(html)}，是否包含岗位：{'data-jobid' in html}")
-                    if "data-jobid" not in html:
-                        print(f"🔍 调试：页面反爬检测：{any(kw in html for kw in ANTI_CRAWL_KEYWORDS)}")
 
                 if any(keyword in html for keyword in ANTI_CRAWL_KEYWORDS):
                     raise Exception("触发反爬安全验证")
                 self.current_delay = self.config["request_delay"]
                 return html
             except Exception as e:
-                print(f"⚠️  请求失败: {e}，重试次数: {retry+1}")
+                if self.config["debug_mode"]:
+                    print(f"⚠️  请求失败: {e}，重试次数: {retry+1}")
                 self.current_delay *= 2
                 if retry == self.config["max_retry"]:
-                    print(f"❌  达到最大重试次数，跳过当前请求")
                     return None
         return None
 
@@ -393,20 +541,18 @@ class BossSpider:
                 return round(avg_monthly * bonus_month / 12, 2)
             return 0
         except Exception as e:
-            print(f"⚠️  薪资解析异常: {e}，原始字符串: {salary_str}")
+            if self.config["debug_mode"]:
+                print(f"⚠️  薪资解析异常: {e}，原始字符串: {salary_str}")
             return 0
 
     def _parse_job_card(self, job_card: Tag, city_name: str) -> Optional[Dict]:
         try:
             rules = BOSS_PARSE_RULES
             job_info = {"city": city_name}
-
-            # 【核心】优先取data-jobid，最稳定的唯一标识
             job_info["id"] = job_card.get("data-jobid", "")
             if not job_info["id"]:
                 return None
 
-            # 调试模式：打印岗位ID，确认解析到节点
             if self.config["debug_mode"]:
                 print(f"🔍 调试：解析到岗位ID：{job_info['id']}")
 
@@ -440,37 +586,42 @@ class BossSpider:
 
             return job_info
         except Exception as e:
-            print(f"⚠️  单个岗位解析失败: {e}")
+            if self.config["debug_mode"]:
+                print(f"⚠️  单个岗位解析失败: {e}")
             return None
 
     def crawl_city(self, city_id: int) -> List[Dict]:
         city_name = self.city_map.get(city_id, f"未知城市{city_id}")
-        print(f"\n📡 开始爬取 {city_name} 职位...")
+        if self.config["debug_mode"]:
+            print(f"\n📡 开始爬取 {city_name} 职位...")
         all_jobs = []
 
         for page in range(1, self.config["max_pages"] + 1):
-            # 【修复】BOSS搜索关键词用空格分隔，符合平台搜索语法
             query = urllib.parse.quote(' '.join(self.config["job_keywords"]))
             url = f"https://www.zhipin.com/web/geek/job?query={query}&city={city_id}&page={page}"
-            print(f"🔗 爬取URL：{url}")
+            
+            if self.config["debug_mode"]:
+                print(f"🔗 爬取URL：{url}")
 
             html = self._request_with_anti_crawl(url)
             if not html:
-                print(f"❌ {city_name} 第{page}页获取失败，跳过")
+                if self.config["debug_mode"]:
+                    print(f"❌ {city_name} 第{page}页获取失败，跳过")
                 continue
 
             try:
                 soup = BeautifulSoup(html, "lxml")
                 job_list = None
-                # 按优先级匹配岗位列表
                 for list_rule in BOSS_PARSE_RULES["job_list"]:
                     job_list = soup.find_all(list_rule["tag"], list_rule.get("attrs", {}))
                     if job_list:
-                        print(f"✅ 匹配到岗位列表，数量：{len(job_list)}")
+                        if self.config["debug_mode"]:
+                            print(f"✅ 匹配到岗位列表，数量：{len(job_list)}")
                         break
                 
                 if not job_list:
-                    print(f"ℹ️ {city_name} 第{page}页无匹配岗位，结束爬取")
+                    if self.config["debug_mode"]:
+                        print(f"ℹ️ {city_name} 第{page}页无匹配岗位，结束爬取")
                     break
 
                 page_jobs = []
@@ -480,13 +631,16 @@ class BossSpider:
                         page_jobs.append(parsed_job)
                 
                 all_jobs.extend(page_jobs)
-                print(f"✅ {city_name} 第{page}页解析完成，有效岗位：{len(page_jobs)}个")
+                if self.config["debug_mode"]:
+                    print(f"✅ {city_name} 第{page}页解析完成，有效岗位：{len(page_jobs)}个")
 
             except Exception as e:
-                print(f"❌ {city_name} 第{page}页解析失败: {e}")
+                if self.config["debug_mode"]:
+                    print(f"❌ {city_name} 第{page}页解析失败: {e}")
                 continue
 
-        print(f"📊 {city_name} 爬取完成，累计有效岗位：{len(all_jobs)}个")
+        if self.config["debug_mode"]:
+            print(f"📊 {city_name} 爬取完成，累计有效岗位：{len(all_jobs)}个")
         return all_jobs
 
     def crawl_all_cities(self) -> List[Dict]:
@@ -513,7 +667,8 @@ class DataProcessor:
                 data = json.load(f)
                 return set(data)
         except Exception as e:
-            print(f"⚠️  历史记录加载失败，使用空集合: {e}")
+            if self.config["debug_mode"]:
+                print(f"⚠️  历史记录加载失败: {e}")
             return set()
         finally:
             release_lock(lock_obj)
@@ -528,9 +683,11 @@ class DataProcessor:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(temp_file, self.history_file)
-            print("✅ 历史去重记录已安全保存")
+            if self.config["debug_mode"]:
+                print("✅ 历史去重记录已安全保存")
         except Exception as e:
-            print(f"❌ 历史记录保存失败: {e}")
+            if self.config["debug_mode"]:
+                print(f"❌ 历史记录保存失败: {e}")
             if os.path.exists(temp_file):
                 try:
                     os.remove(temp_file)
@@ -542,33 +699,27 @@ class DataProcessor:
     def filter_jobs(self, jobs: List[Dict]) -> List[Dict]:
         filtered = []
         config = self.config
-        # 调试模式：打印过滤前的岗位数量
         if config["debug_mode"]:
             print(f"\n🔍 调试：过滤前总岗位数：{len(jobs)}")
 
         for idx, job in enumerate(jobs):
-            # 去重
             if job["id"] in self.history:
                 if config["debug_mode"]:
                     print(f"🔍 调试：岗位{idx+1}已推送过，过滤")
                 continue
-            # 薪资过滤
             if job["salary"] < config["min_salary"]:
                 if config["debug_mode"]:
                     print(f"🔍 调试：岗位{idx+1}薪资{job['salary']}低于下限，过滤")
                 continue
-            # 排除关键词过滤
             full_text = f"{job['job_name']} {job['company']} {job.get('welfare', '')}"
             if any(kw in full_text for kw in config["exclude_keywords"]):
                 if config["debug_mode"]:
                     print(f"🔍 调试：岗位{idx+1}命中排除关键词，过滤")
                 continue
-            # 岗位关键词匹配
             if not any(kw in job["job_name"] for kw in config["job_keywords"]):
                 if config["debug_mode"]:
                     print(f"🔍 调试：岗位{idx+1}未命中目标关键词，过滤")
                 continue
-            # 学历过滤
             job_edu = job.get("education", "")
             if config["education_allow"] and not any(edu in job_edu for edu in config["education_allow"]):
                 if config["debug_mode"]:
@@ -578,7 +729,6 @@ class DataProcessor:
                 if config["debug_mode"]:
                     print(f"🔍 调试：岗位{idx+1}学历{job_edu}命中黑名单，过滤")
                 continue
-            # 经验过滤
             job_exp = job.get("experience", "")
             if config["experience_allow"] and not any(exp in job_exp for exp in config["experience_allow"]):
                 if config["debug_mode"]:
@@ -621,7 +771,7 @@ class DataProcessor:
         scored_jobs.sort(key=lambda x: (x["score"], x["salary"]), reverse=True)
         return scored_jobs
 
-# ==================== 📢 钉钉推送器 ====================
+# ==================== 📢 钉钉推送器（增强版） ====================
 class DingTalkNotifier:
     def __init__(self, config: Dict):
         self.webhook = config["dingtalk_webhook"]
@@ -639,8 +789,9 @@ class DingTalkNotifier:
         sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
         return sign, timestamp
 
-    def _build_single_message(self, jobs: List[Dict], total_count: int, page: int, total_page: int) -> str:
-        content = f"# 🎯 今日最优职位推送 (Top {total_count}) [{page}/{total_page}]\n\n"
+    def _build_single_message(self, jobs: List[Dict], total_count: int, page: int, total_page: int, is_test: bool = False) -> str:
+        title_prefix = "🧪【测试】" if is_test else "🎯"
+        content = f"# {title_prefix} 今日最优职位推送 (Top {total_count}) [{page}/{total_page}]\n\n"
         for idx, job in enumerate(jobs, 1):
             content += f"### {idx}. {job['job_name']} - {job['company']}\n"
             content += f"- 💰 薪资：{job['salary_str']}\n"
@@ -666,14 +817,14 @@ class DingTalkNotifier:
             chunks.append(current_chunk)
         return chunks
 
-    def send(self, jobs: List[Dict]):
+    def send(self, jobs: List[Dict], is_test: bool = False):
         if not self.webhook:
             print("ℹ️  未配置钉钉Webhook，跳过推送")
             return
         if not jobs:
             print("ℹ️  无符合条件的岗位，跳过推送")
             return
-        # 调试模式：打印推送岗位详情
+
         if self.debug_mode:
             print(f"\n🔍 调试：即将推送的岗位：")
             for idx, job in enumerate(jobs, 1):
@@ -683,31 +834,49 @@ class DingTalkNotifier:
         total_count = len(jobs)
         total_page = len(job_chunks)
         success_count = 0
+
         for page, chunk in enumerate(job_chunks, 1):
-            content = self._build_single_message(chunk, total_count, page, total_page)
+            content = self._build_single_message(chunk, total_count, page, total_page, is_test)
             sign, timestamp = self._generate_sign()
             request_url = self.webhook
             if sign and timestamp:
                 request_url = f"{self.webhook}&timestamp={timestamp}&sign={sign}"
+
             request_headers = {"Content-Type": "application/json;charset=utf-8"}
             request_data = {
                 "msgtype": "markdown",
                 "markdown": {
-                    "title": f"今日职位推送 Top {total_count}",
+                    "title": f"{'【测试】' if is_test else ''}今日职位推送 Top {total_count}",
                     "text": content
                 }
             }
+
             try:
+                if self.debug_mode:
+                    print(f"🔍 调试：正在发送钉钉消息 [{page}/{total_page}]...")
+                
                 resp = Session().post(request_url, json=request_data, headers=request_headers, timeout=10)
                 resp.raise_for_status()
                 result = resp.json()
+
                 if result.get("errcode") == 0:
                     success_count += 1
                     print(f"✅ 钉钉推送成功 [{page}/{total_page}]")
                 else:
-                    print(f"❌ 钉钉推送失败 [{page}/{total_page}]，错误码：{result.get('errcode')}，信息：{result.get('errmsg')}")
+                    print(f"❌ 钉钉推送失败 [{page}/{total_page}]")
+                    print(f"   错误码：{result.get('errcode')}")
+                    print(f"   错误信息：{result.get('errmsg')}")
+                    # 钉钉常见错误码提示
+                    if result.get("errcode") == 310000:
+                        print("   💡 提示：可能是机器人安全设置问题，请检查IP白名单、关键词限制或加签配置")
+                    elif result.get("errcode") == 40035:
+                        print("   💡 提示：缺少timestamp参数，请检查加签配置")
+                    elif result.get("errcode") == 40014:
+                        print("   💡 提示：签名错误，请检查DINGTALK_SECRET配置")
+
             except Exception as e:
                 print(f"❌ 钉钉推送异常 [{page}/{total_page}]：{e}")
+
         if success_count == total_page:
             print(f"🎉 全部{total_page}条消息推送完成，共推送{total_count}个岗位")
         else:
@@ -716,19 +885,37 @@ class DingTalkNotifier:
 # ==================== 🚀 主程序入口 ====================
 def main():
     print("="*60)
-    print("🚀 Job Scanner v1.3 调试修复版 启动运行")
+    print("🚀 Job Scanner v1.4 测试排错增强版 启动运行")
     print(f"🐛 调试模式：{'开启' if CONFIG['debug_mode'] else '关闭'}")
+    print(f"🧪 测试模式：{'开启' if CONFIG['test_mode'] else '关闭'}")
     print("="*60)
 
+    # 如果是测试模式，先运行全链路排错
+    if CONFIG["test_mode"]:
+        Tester.run_full_troubleshooting()
+        print("\n💡 测试模式下，仅运行排错检查和钉钉推送测试，不执行实际爬取")
+        print("="*60)
+        return
+
+    # 正常模式：先做基础配置校验
+    print("\n【前置检查】配置校验...")
+    config_passed, config_messages = Tester.validate_config()
+    for msg in config_messages:
+        print(f"  {msg}")
+
+    if not config_passed:
+        print("\n❌ 配置校验未通过，请检查上述错误后重试")
+        print("="*60)
+        return
+
+    # 正常爬取流程
     spider = BossSpider(CONFIG)
     processor = DataProcessor(CONFIG)
     notifier = DingTalkNotifier(CONFIG)
 
-    # 1. 全量爬取
     all_jobs = spider.crawl_all_cities()
     print(f"\n📊 全量爬取完成，共获取原始岗位 {len(all_jobs)} 个")
 
-    # 2. 全维度过滤
     filtered_jobs = processor.filter_jobs(all_jobs)
     print(f"✅ 过滤完成，剩余符合条件的新岗位 {len(filtered_jobs)} 个")
 
@@ -737,15 +924,12 @@ def main():
         print("="*60)
         return
 
-    # 3. 智能打分排序
     scored_jobs = processor.score_jobs(filtered_jobs)
     top_jobs = scored_jobs[:CONFIG["top_n"]]
     print(f"🎯 排序完成，选出 Top {len(top_jobs)} 最优岗位")
 
-    # 4. 钉钉推送
     notifier.send(top_jobs)
 
-    # 5. 更新历史记录
     for job in top_jobs:
         processor.history.add(job["id"])
     processor.save_history()
