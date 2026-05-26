@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Job Me 简历投放助手</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ────────── 顶栏 ────────── -->
+  <header id="topbar">
+    <div class="logo">
+      <span class="logo-icon">🚀</span>
+      <div>
+        <h1>Job Me</h1>
+        <span class="subtitle">简历投放助手</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="status-badge" id="engineStatus">⏸️ 待命</span>
+      <span class="version">v1.0</span>
+    </div>
+  </header>
+
+  <div class="layout">
+
+    <!-- ────────── 左栏：配置 ────────── -->
+    <aside id="sidebar">
+      <section class="panel config-panel">
+        <h3>🎯 平台选择</h3>
+        <div class="platform-grid">
+          <button class="pbtn active" data-platform="boss">
+            <span class="pbtn-icon">💼</span>
+            <span>BOSS直聘</span>
+          </button>
+          <button class="pbtn" data-platform="zhilian">
+            <span class="pbtn-icon">📋</span>
+            <span>智联招聘</span>
+          </button>
+          <button class="pbtn" data-platform="job51">
+            <span class="pbtn-icon">📎</span>
+            <span>前程无忧</span>
+          </button>
+          <button class="pbtn" data-platform="liepin">
+            <span class="pbtn-icon">🎯</span>
+            <span>猎聘</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="panel config-panel">
+        <h3>⚙️ 策略设置</h3>
+        <div class="cfg-row">
+          <label>自动化引擎</label>
+          <select id="selStrategy">
+            <option value="playwright">Playwright</option>
+            <option value="puppeteer">Puppeteer</option>
+          </select>
+        </div>
+        <div class="cfg-row">
+          <label>浏览器模式</label>
+          <select id="selHeadless">
+            <option value="false">显示窗口（可观察）</option>
+            <option value="true">无头模式（后台）</option>
+          </select>
+        </div>
+        <div class="cfg-row">
+          <label>代理地址（可选）</label>
+          <input type="text" id="inpProxy" placeholder="http://127.0.0.1:7890" />
+        </div>
+      </section>
+
+      <section class="panel config-panel">
+        <h3>🔍 关键词过滤</h3>
+        <div class="cfg-row">
+          <label>包含关键词</label>
+          <input type="text" id="inpKeywords" value="财务,会计" placeholder="用逗号分隔" />
+        </div>
+        <div class="cfg-row">
+          <label>排除关键词</label>
+          <input type="text" id="inpExclude" value="外包,培训,派遣" placeholder="用逗号分隔" />
+        </div>
+        <div class="cfg-row">
+          <label>城市代码（可选）</label>
+          <input type="text" id="inpCity" placeholder="101010100" />
+        </div>
+        <div class="cfg-row">
+          <label>投递上限</label>
+          <input type="number" id="inpMax" value="50" min="1" max="200" />
+        </div>
+      </section>
+
+      <section class="panel config-panel">
+        <h3>🤖 AI 回复配置</h3>
+        <div class="cfg-row">
+          <label>API Key</label>
+          <input type="password" id="inpAiKey" placeholder="sk-..." />
+        </div>
+        <div class="cfg-row">
+          <label>API 地址</label>
+          <input type="text" id="inpAiEndpoint" value="https://api.deepseek.com/v1/chat/completions" />
+        </div>
+        <div class="cfg-row">
+          <label>模型</label>
+          <input type="text" id="inpAiModel" value="deepseek-chat" />
+        </div>
+      </section>
+
+      <div class="action-bar">
+        <button class="btn btn-primary" id="btnStart">▶ 启动自动化</button>
+        <button class="btn btn-danger" id="btnStop" disabled>■ 停止</button>
+      </div>
+    </aside>
+
+    <!-- ────────── 右栏：预览 + 日志 ────────── -->
+    <main id="main">
+
+      <!-- 浏览器截图 -->
+      <section class="panel screenshot-panel">
+        <div class="panel-header">
+          <h3>👁️ 浏览器实时画面</h3>
+          <span class="panel-badge" id="screenshotStatus">等待启动</span>
+        </div>
+        <div class="screenshot-container" id="screenshotWrap">
+          <div class="screenshot-placeholder" id="screenshotPlaceholder">
+            <div class="sph-icon">🖥️</div>
+            <div>点击「启动自动化」后，浏览器的每一步都会截图显示在这里</div>
+            <div class="sph-hint">你可以在"策略设置"中选择「显示窗口」来实时观察浏览器操作</div>
+          </div>
+          <img id="screenshotImg" class="screenshot-img" style="display:none" alt="浏览器截图" />
+        </div>
+      </section>
+
+      <!-- 日志 -->
+      <section class="panel log-panel">
+        <div class="panel-header">
+          <h3>📋 操作日志</h3>
+          <span class="panel-badge" id="deliveryCount">已投递: 0</span>
+        </div>
+        <div class="log-container" id="logContainer">
+          <div class="log-placeholder">等待启动自动化...</div>
+        </div>
+      </section>
+
+      <!-- 投递记录 -->
+      <section class="panel delivery-panel">
+        <div class="panel-header">
+          <h3>📜 投递记录</h3>
+          <button class="btn-sm" id="btnClearDeliveries">清空</button>
+        </div>
+        <div class="delivery-list" id="deliveryList">
+          <div class="dl-placeholder">暂无记录</div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <footer id="footer">
+    <span>引擎: <span id="footerEngine">—</span></span>
+    <span>步骤: <span id="footerStep">—</span></span>
+    <span>投递: <span id="footerCount">0</span> / <span id="footerMax">50</span></span>
+  </footer>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

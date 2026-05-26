@@ -1,20 +1,17 @@
 {
-  "name": "job-me-platform",
+  "name": "job-me-desktop",
   "version": "1.0.0",
-  "description": "Job Me 简历投放平台 - 前后端完整系统",
-  "main": "index.js",
-  "type": "module",
+  "description": "Job Me 简历投放助手 - 桌面应用",
+  "main": "main.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node --watch index.js",
-    "setup": "node scripts/setup.js"
+    "start": "electron .",
+    "setup": "node scripts/install-browsers.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.0.0",
-    "cors": "^2.8.5",
-    "express": "^4.21.0",
-    "playwright": "^1.48.0",
-    "dotenv": "^16.4.5",
-    "node-fetch": "^3.3.2"
+    "electron": "^33.0.0",
+    "playwright": "^1.48.0"
+  },
+  "optionalDependencies": {
+    "puppeteer": "^23.0.0"
   }
 }
