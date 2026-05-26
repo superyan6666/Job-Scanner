@@ -1,249 +1,381 @@
-const API = {
-  base: '',
-  async get(path) { const r = await fetch(this.base + path); return r.json(); },
-  async post(path, data) {
-    const r = await fetch(this.base + path, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
-    });
-    return r.json();
+const API_BASE = '';
+
+// ─── DOM refs ───
+const $ = id => document.getElementById(id);
+const dom = {
+  // SSE
+  sseDot: $('sseDot'),
+  sseText: $('sseText'),
+
+  // Workflow
+  wfSteps: {
+    browser: $('wf-browser'),
+    login: $('wf-login'),
+    search: $('wf-search'),
+    deliver: $('wf-deliver'),
   },
-  async del(path) { const r = await fetch(this.base + path, { method: 'DELETE' }); return r.json(); },
+  wfCount: $('wfCount'),
+
+  // Status card
+  statusIndicator: $('statusIndicator'),
+  currentPlatformDisplay: $('currentPlatformDisplay'),
+  siStep: $('siStep'),
+  siJob: $('siJob'),
+  siProgress: $('siProgress'),
+  progressFill: $('progressFill'),
+
+  // Preview
+  previewContainer: $('previewContainer'),
+  previewPlaceholder: $('previewPlaceholder'),
+  previewImage: $('previewImage'),
+  previewStatus: $('previewStatus'),
+
+  // Controls
+  platformBtns: document.querySelectorAll('.platform-card'),
+  filterKeywords: $('filterKeywords'),
+  filterExclude: $('filterExclude'),
+  cityCode: $('cityCode'),
+  maxDelivery: $('maxDelivery'),
+  btnStart: $('btnStart'),
+  btnStop: $('btnStop'),
+  btnTestAI: $('btnTestAI'),
+
+  // Step flow
+  stepFlow: $('stepFlow'),
+  deliveryCountLabel: $('deliveryCountLabel'),
+
+  // Scan info
+  scanCard: $('scanCard'),
+  scanTitle: $('scanTitle'),
+  scanCompany: $('scanCompany'),
+  scanSalary: $('scanSalary'),
+  scanLocation: $('scanLocation'),
+
+  // Delivery list
+  deliveryList: $('deliveryList'),
+
+  // AI
+  aiStatus: $('aiStatus'),
+  aiTestInput: $('aiTestInput'),
+  btnAiTest: $('btnAiTest'),
+  aiProvider: $('aiProvider'),
+  aiReply: $('aiReply'),
 };
 
-const state = {
-  running: false,
-  platform: 'boss',
-  polling: null,
-  logPaused: false,
-};
+// ─── State ───
+let selectedPlatform = 'boss';
+let isRunning = false;
 
-// ---- Status updates ----
-async function updateStatus() {
-  try {
-    const status = await API.get('/api/status');
-    state.running = status.running;
-    document.getElementById('sessionCount').textContent = status.deliveryCount || 0;
-    const pct = status.maxDelivery > 0 ? Math.round((status.deliveryCount / status.maxDelivery) * 100) : 0;
-    document.getElementById('progressPct').textContent = pct + '%';
+// ─── SSE 连接 ───
+function connectSSE() {
+  const evtSource = new EventSource(API_BASE + '/api/events');
 
-    updateBtnStates();
-    updateConnection(true);
-  } catch {
-    updateConnection(false);
-  }
+  evtSource.addEventListener('connected', () => {
+    dom.sseDot.className = 'dot connected';
+    dom.sseText.textContent = '实时连接';
+    addStepItem('🔗', 'SSE 实时连接已建立', '等待操作指令', 0);
+  });
+
+  evtSource.addEventListener('start', (e) => {
+    const data = JSON.parse(e.data);
+    isRunning = true;
+    dom.statusIndicator.textContent = '▶️ 运行中';
+    dom.statusIndicator.className = 'status-indicator running';
+    dom.currentPlatformDisplay.textContent = data.platformName || data.platform;
+    dom.btnStart.disabled = true;
+    dom.btnStop.disabled = false;
+    dom.previewStatus.textContent = '运行中...';
+    dom.stepFlow.innerHTML = '';
+    dom.deliveryList.innerHTML = '<div class="dl-placeholder">等待投递...</div>';
+    dom.deliveryCountLabel.textContent = '已投递: 0';
+    dom.wfCount.textContent = '0';
+    resetWorkflow();
+  });
+
+  evtSource.addEventListener('step', (e) => {
+    const data = JSON.parse(e.data);
+    dom.siStep.textContent = data.title || '';
+    addStepItem(data.emoji || '•', data.title || '', data.detail || '', data.deliveryCount || 0);
+    dom.siProgress.textContent = `${data.deliveryCount || 0} / ${data.maxDelivery || '?'}`;
+    if (data.maxDelivery > 0) {
+      const pct = Math.min((data.deliveryCount / data.maxDelivery) * 100, 100);
+      dom.progressFill.style.width = pct + '%';
+    }
+  });
+
+  evtSource.addEventListener('scan', (e) => {
+    const data = JSON.parse(e.data);
+    dom.scanCard.style.display = 'block';
+    dom.scanTitle.textContent = data.title || '—';
+    dom.scanCompany.textContent = data.company || '—';
+    dom.scanSalary.textContent = data.salary || '—';
+    dom.scanLocation.textContent = data.location || '—';
+    dom.siJob.textContent = `${data.title} @ ${data.company}`;
+  });
+
+  evtSource.addEventListener('delivered', (e) => {
+    const data = JSON.parse(e.data);
+    dom.wfCount.textContent = data.count || 0;
+    dom.deliveryCountLabel.textContent = `已投递: ${data.count}`;
+    addDeliveryItem(data.count, data.title, data.company);
+    dom.scanCard.style.display = 'none';
+  });
+
+  evtSource.addEventListener('skip', (e) => {
+    const data = JSON.parse(e.data);
+    addStepItem('⏭️', `跳过: ${data.title}`, `原因: ${data.reason} · ${data.company}`, 0);
+    dom.siJob.textContent = `⏭️ ${data.title}`;
+  });
+
+  evtSource.addEventListener('screenshot', (e) => {
+    const data = JSON.parse(e.data);
+    if (data.image) {
+      dom.previewImage.src = 'data:image/jpeg;base64,' + data.image;
+      dom.previewImage.style.display = 'block';
+      dom.previewPlaceholder.style.display = 'none';
+      dom.previewStatus.textContent = `📸 ${data.name || '截图'}`;
+    }
+  });
+
+  evtSource.addEventListener('status', (e) => {
+    const data = JSON.parse(e.data);
+    addStepItem('ℹ️', data.message || '', '', 0);
+  });
+
+  evtSource.addEventListener('limit', () => {
+    addStepItem('⛔', '⚠️ 今日沟通已达上限！', '平台限制了今日沟通次数，建议明天再试', 0);
+    dom.statusIndicator.textContent = '⛔ 已达上限';
+    dom.statusIndicator.style.color = 'var(--warning)';
+  });
+
+  evtSource.addEventListener('complete', (e) => {
+    const data = JSON.parse(e.data);
+    addStepItem('🏆', '自动化完成！', `共投递 ${data.deliveryCount} 个岗位`, data.deliveryCount);
+    dom.statusIndicator.textContent = '✅ 已完成';
+    dom.btnStart.disabled = false;
+    dom.btnStop.disabled = true;
+    dom.previewStatus.textContent = '已完成';
+    setWorkflowDone();
+  });
+
+  evtSource.addEventListener('error', (e) => {
+    const data = JSON.parse(e.data);
+    addStepItem('❌', '错误', data.message || '未知错误', 0);
+    dom.statusIndicator.textContent = '❌ 错误';
+    dom.btnStart.disabled = false;
+    dom.btnStop.disabled = true;
+  });
+
+  evtSource.addEventListener('stop', () => {
+    isRunning = false;
+    dom.btnStart.disabled = false;
+    dom.btnStop.disabled = true;
+    dom.previewStatus.textContent = '已停止';
+    addStepItem('⏹️', '自动化已停止', '用户手动停止或任务结束', 0);
+  });
+
+  evtSource.onerror = () => {
+    dom.sseDot.className = 'dot disconnected';
+    dom.sseText.textContent = '连接断开';
+    addStepItem('⚠️', 'SSE 连接断开', '尝试重新连接...', 0);
+  };
 }
 
-async function updateStats() {
-  try {
-    const stats = await API.get('/api/stats');
-    document.getElementById('todayCount').textContent = stats.today || 0;
-    document.getElementById('totalCount').textContent = stats.total || 0;
-  } catch {}
+// ─── Workflow visual ───
+function resetWorkflow() {
+  Object.values(dom.wfSteps).forEach(el => {
+    el.classList.remove('active', 'done');
+  });
 }
 
-function updateConnection(connected) {
-  const dot = document.querySelector('.dot');
-  const text = document.getElementById('statusText');
-  if (connected) {
-    dot.className = 'dot connected';
-    text.textContent = '已连接';
-  } else {
-    dot.className = 'dot error';
-    text.textContent = '连接断开';
-  }
+function setWorkflowDone() {
+  Object.values(dom.wfSteps).forEach(el => {
+    el.classList.remove('active');
+    el.classList.add('done');
+  });
 }
 
-function updateBtnStates() {
-  document.getElementById('btnStart').disabled = state.running;
-  document.getElementById('btnStop').disabled = !state.running;
+function updateWorkflow(stepIndex) {
+  resetWorkflow();
+  const steps = Object.values(dom.wfSteps);
+  steps.forEach((el, i) => {
+    if (i + 1 < stepIndex) el.classList.add('done');
+    else if (i + 1 === stepIndex) el.classList.add('active');
+  });
 }
 
-// ---- Log ----
-function addLog(message, type = 'status') {
-  const container = document.getElementById('logContainer');
-  const placeholder = container.querySelector('.log-placeholder');
+// ─── Step flow items ───
+function addStepItem(emoji, title, detail, count) {
+  const placeholder = dom.stepFlow.querySelector('.sf-placeholder');
   if (placeholder) placeholder.remove();
 
+  const item = document.createElement('div');
+  item.className = 'sf-item done';
   const time = new Date().toLocaleTimeString();
-  const entry = document.createElement('div');
-  entry.className = `log-entry ${type}`;
-  entry.textContent = `[${time}] ${message}`;
-  container.appendChild(entry);
-  container.scrollTop = container.scrollHeight;
+  item.innerHTML = `
+    <span class="sf-emoji">${emoji}</span>
+    <div class="sf-content">
+      <div class="sf-title">${title}</div>
+      ${detail ? `<div class="sf-detail">${detail}</div>` : ''}
+    </div>
+    <span class="sf-time">${time}</span>
+  `;
+  dom.stepFlow.appendChild(item);
+  dom.stepFlow.scrollTop = dom.stepFlow.scrollHeight;
 
-  if (type === 'delivered') {
-    const countEl = document.getElementById('deliveryCountLabel');
-    const current = parseInt(countEl.textContent.match(/\d+/)?.[0] || 0);
-    countEl.textContent = `已投递: ${current + 1}`;
+  // Update workflow based on title keywords
+  if (title.includes('启动浏览器')) updateWorkflow(1);
+  if (title.includes('登录') || title.includes('检查登录')) updateWorkflow(2);
+  if (title.includes('搜索') || title.includes('页面已加载')) updateWorkflow(3);
+  if (title.includes('投递') || title.includes('已投递')) updateWorkflow(4);
+
+  // Update count
+  if (count > 0) {
+    dom.wfCount.textContent = count;
+    dom.deliveryCountLabel.textContent = `已投递: ${count}`;
   }
 }
 
-// ---- History ----
-async function loadHistory() {
-  try {
-    const deliveries = await API.get('/api/deliveries?limit=30');
-    const tbody = document.getElementById('historyBody');
-    if (!deliveries.length) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty-row">暂无投递记录</td></tr>';
-      return;
-    }
-    tbody.innerHTML = deliveries.map(d => `
-      <tr>
-        <td>${new Date(d.created_at).toLocaleString()}</td>
-        <td>${d.title || '-'}</td>
-        <td>${d.company || '-'}</td>
-        <td>${d.platform || '-'}</td>
-        <td><span class="status-badge">${d.status}</span></td>
-      </tr>
-    `).join('');
-  } catch {}
+// ─── Delivery list item ───
+function addDeliveryItem(index, title, company) {
+  const placeholder = dom.deliveryList.querySelector('.dl-placeholder');
+  if (placeholder) placeholder.remove();
+
+  const item = document.createElement('div');
+  item.className = 'dl-item';
+  const time = new Date().toLocaleTimeString();
+  item.innerHTML = `
+    <span class="dl-index">#${index}</span>
+    <span class="dl-title">${title || '-'}</span>
+    <span class="dl-company">${company || '-'}</span>
+    <span style="font-size:11px;color:var(--text-muted)">${time}</span>
+  `;
+  dom.deliveryList.insertBefore(item, dom.deliveryList.firstChild);
+
+  if (dom.deliveryList.children.length > 50) {
+    dom.deliveryList.removeChild(dom.deliveryList.lastChild);
+  }
 }
 
-// ---- Actions ----
-async function startAutomation() {
-  const keywords = document.getElementById('filterKeywords').value;
-  const exclude = document.getElementById('filterExclude').value;
-  const maxDelivery = parseInt(document.getElementById('maxDelivery').value) || 50;
-
-  addLog(`🚀 启动 ${state.platform} 自动化投递...`, 'status');
-  addLog(`   关键词: ${keywords}`, 'status');
-  addLog(`   排除: ${exclude || '无'}`, 'status');
-  addLog(`   上限: ${maxDelivery}`, 'status');
-
-  const result = await API.post('/api/start', {
-    platform: state.platform,
-    filters: {
-      includeKeywords: keywords ? keywords.split(/[,，]/).map(s => s.trim()).filter(Boolean) : [],
-      excludeKeywords: exclude ? exclude.split(/[,，]/).map(s => s.trim()).filter(Boolean) : [],
-      maxPerSession: maxDelivery,
-    },
+// ─── Platform selection ───
+dom.platformBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    dom.platformBtns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedPlatform = btn.dataset.platform;
+    dom.currentPlatformDisplay.textContent = btn.querySelector('.pc-name').textContent;
+    addStepItem('📌', `已选择平台: ${btn.querySelector('.pc-name').textContent}`, '', 0);
   });
+});
 
-  if (result.success) {
-    addLog('✅ 自动化任务已启动，正在监控进度...', 'status');
-    state.running = true;
-    updateBtnStates();
+// ─── Start ───
+dom.btnStart.addEventListener('click', async () => {
+  const keywords = dom.filterKeywords.value;
+  const exclude = dom.filterExclude.value;
+  const cityCode = dom.cityCode.value;
+  const maxDelivery = parseInt(dom.maxDelivery.value) || 50;
 
-    if (state.polling) clearInterval(state.polling);
-    state.polling = setInterval(pollProgress, 2000);
-  }
-}
-
-async function stopAutomation() {
-  addLog('🛑 正在停止自动化...', 'status');
-  await API.post('/api/stop');
-  state.running = false;
-  updateBtnStates();
-  if (state.polling) {
-    clearInterval(state.polling);
-    state.polling = null;
-  }
-  setTimeout(() => addLog('⏸️ 已手动停止', 'status'), 1000);
-}
-
-async function pollProgress() {
-  try {
-    const status = await API.get('/api/status');
-    document.getElementById('sessionCount').textContent = status.deliveryCount || 0;
-    const max = status.maxDelivery || 50;
-    const pct = max > 0 ? Math.round((status.deliveryCount / max) * 100) : 0;
-    document.getElementById('progressPct').textContent = pct + '%';
-
-    if (!status.running && state.running) {
-      state.running = false;
-      updateBtnStates();
-      if (state.polling) { clearInterval(state.polling); state.polling = null; }
-      addLog('🏁 自动化任务已完成', 'status');
-      updateStats();
-      loadHistory();
-    }
-  } catch {}
-}
-
-async function testAI() {
-  const btn = document.getElementById('btnTestAI');
-  btn.disabled = true;
-  btn.textContent = '测试中...';
-
-  addLog('🤖 正在测试 AI 连接...', 'status');
+  addStepItem('🚀', `启动 ${selectedPlatform.toUpperCase()} 自动化投递`, `关键词: ${keywords || '无'} | 上限: ${maxDelivery}`, 0);
 
   try {
-    const result = await API.get('/api/ai/test');
-    if (result.success) {
-      addLog(`✅ AI 连接成功 (${result.provider}): ${result.reply}`, 'status');
-      document.getElementById('aiProvider').textContent = `✓ ${result.provider}`;
-      document.getElementById('aiConfigInfo').textContent = `✅ AI 已就绪 (${result.provider})`;
-      document.getElementById('aiConfigInfo').className = 'ai-config-info ok';
-    } else {
-      addLog(`❌ AI 测试失败`, 'error');
-      document.getElementById('aiConfigInfo').textContent = `❌ ${result.error}`;
-      document.getElementById('aiConfigInfo').className = 'ai-config-info err';
-    }
-  } catch (err) {
-    addLog(`❌ AI 连接错误: ${err.message}`, 'error');
-    document.getElementById('aiConfigInfo').textContent = `❌ 连接失败: ${err.message}`;
-    document.getElementById('aiConfigInfo').className = 'ai-config-info err';
-  }
-
-  btn.disabled = false;
-  btn.textContent = '🤖 测试 AI';
-}
-
-async function generateAIReply() {
-  const input = document.getElementById('aiTestInput');
-  const replyDiv = document.getElementById('aiReply');
-  const text = input.value.trim();
-  if (!text) return;
-
-  replyDiv.style.display = 'none';
-  replyDiv.textContent = '正在思考...';
-
-  try {
-    const result = await API.post('/api/ai/reply', { message: text });
-    if (result.success) {
-      replyDiv.textContent = result.reply;
-      replyDiv.className = 'ai-reply show';
-    } else {
-      replyDiv.textContent = `❌ ${result.error}`;
-      replyDiv.className = 'ai-reply show';
-      replyDiv.style.borderColor = 'var(--danger)';
-    }
-  } catch (err) {
-    replyDiv.textContent = `❌ ${err.message}`;
-    replyDiv.className = 'ai-reply show';
-    replyDiv.style.borderColor = 'var(--danger)';
-  }
-}
-
-// ---- Init ----
-document.addEventListener('DOMContentLoaded', async () => {
-  document.querySelectorAll('.platform-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.platform-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      state.platform = btn.dataset.platform;
-      addLog(`📌 切换到: ${btn.textContent}`, 'status');
+    const resp = await fetch(API_BASE + '/api/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        platform: selectedPlatform,
+        filters: {
+          includeKeywords: keywords ? keywords.split(/[,，]/).map(s => s.trim()).filter(Boolean) : [],
+          excludeKeywords: exclude ? exclude.split(/[,，]/).map(s => s.trim()).filter(Boolean) : [],
+          cityCode: cityCode || undefined,
+          maxPerSession: maxDelivery,
+        },
+      }),
     });
-  });
+    const data = await resp.json();
+    if (data.error) {
+      addStepItem('⚠️', data.error, '', 0);
+    }
+  } catch (err) {
+    addStepItem('❌', '启动失败', err.message, 0);
+  }
+});
 
-  document.getElementById('btnStart').addEventListener('click', startAutomation);
-  document.getElementById('btnStop').addEventListener('click', stopAutomation);
-  document.getElementById('btnTestAI').addEventListener('click', testAI);
-  document.getElementById('btnAiTest').addEventListener('click', generateAIReply);
-  document.getElementById('btnRefresh').addEventListener('click', loadHistory);
+// ─── Stop ───
+dom.btnStop.addEventListener('click', async () => {
+  addStepItem('🛑', '正在停止自动化...', '', 0);
+  await fetch(API_BASE + '/api/stop', { method: 'POST' });
+});
 
-  // Initial load
-  await Promise.all([updateStatus(), updateStats(), loadHistory()]);
-  setInterval(updateStatus, 5000);
-  setInterval(updateStats, 10000);
+// ─── Test AI ───
+dom.btnTestAI.addEventListener('click', async () => {
+  dom.btnTestAI.disabled = true;
+  dom.btnTestAI.innerHTML = '<span class="btn-icon">⏳</span><span class="btn-text">测试中...</span>';
+  dom.aiStatus.textContent = '🤖 正在测试 AI 连接...';
+  dom.aiStatus.className = 'ai-status';
 
-  // Check AI config on startup
-  setTimeout(testAI, 2000);
+  try {
+    const resp = await fetch(API_BASE + '/api/ai/test');
+    const data = await resp.json();
+    if (data.success) {
+      dom.aiStatus.textContent = `✅ AI 已就绪 (${data.provider})`;
+      dom.aiStatus.className = 'ai-status ok';
+      dom.aiProvider.textContent = `✓ ${data.provider}`;
+      addStepItem('🤖', '✅ AI 连接测试成功', `回复: ${data.reply}`, 0);
+    } else {
+      dom.aiStatus.textContent = `❌ ${data.error}`;
+      dom.aiStatus.className = 'ai-status err';
+    }
+  } catch (err) {
+    dom.aiStatus.textContent = `❌ 连接失败: ${err.message}`;
+    dom.aiStatus.className = 'ai-status err';
+  }
 
-  addLog('📊 Job Me 平台已加载，等待操作...', 'status');
+  dom.btnTestAI.disabled = false;
+  dom.btnTestAI.innerHTML = '<span class="btn-icon">🤖</span><span class="btn-text">测试 AI</span>';
+});
 
-  // Listen for SSE or polling-based log updates
-  Object.keys(state).forEach(k => {
-    if (k.startsWith('_')) return;
-  });
+// ─── AI Reply generator ───
+dom.btnAiTest.addEventListener('click', async () => {
+  const text = dom.aiTestInput.value.trim();
+  if (!text) return;
+  dom.aiReply.style.display = 'none';
+  dom.aiReply.textContent = '';
+
+  try {
+    const resp = await fetch(API_BASE + '/api/ai/reply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text }),
+    });
+    const data = await resp.json();
+    if (data.success) {
+      dom.aiReply.textContent = data.reply;
+      dom.aiReply.className = 'ai-reply show';
+    } else {
+      dom.aiReply.textContent = `❌ ${data.error}`;
+      dom.aiReply.className = 'ai-reply show';
+    }
+  } catch (err) {
+    dom.aiReply.textContent = `❌ ${err.message}`;
+    dom.aiReply.className = 'ai-reply show';
+  }
+});
+
+// ─── Click screenshot to enlarge ───
+dom.previewImage.addEventListener('click', () => {
+  if (dom.previewImage.src && dom.previewImage.src.includes('base64')) {
+    window.open(dom.previewImage.src);
+  }
+});
+
+// ─── Init ───
+document.addEventListener('DOMContentLoaded', () => {
+  connectSSE();
+  dom.currentPlatformDisplay.textContent = 'BOSS直聘';
+  addStepItem('👋', 'Job Me 平台已启动', '选择平台和关键词，点击「启动自动化」开始投递', 0);
+
+  // Auto test AI on start (delay to not overwhelm)
+  setTimeout(() => {
+    dom.btnTestAI.click();
+  }, 3000);
 });
