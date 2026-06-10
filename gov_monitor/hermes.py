@@ -2,35 +2,55 @@ import os
 import requests
 import json
 
+def load_hermes_env():
+    env_path = os.path.expanduser('~/.hermes/.env')
+    if os.path.exists(env_path):
+        with open(env_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.strip().startswith('SILICONFLOW_API_KEY='):
+                    return line.split('=', 1)[1].strip()
+    return ''
+
 # 配置环境变量 SILICONFLOW_API_KEY
-SILICONFLOW_API_KEY = os.environ.get('SILICONFLOW_API_KEY', '')
+SILICONFLOW_API_KEY = os.environ.get('SILICONFLOW_API_KEY') or load_hermes_env()
 # 默认采用智谱 GLM-4 或 DeepSeek-V2.5，硅基流动接口目前支持 deepseek-ai/DeepSeek-V2.5
 SILICONFLOW_MODEL = os.environ.get('SILICONFLOW_MODEL', 'deepseek-ai/DeepSeek-V2.5')
 
-# 四川省人均 GDP 排名前 50% 城市（硬编码白名单）
-SICHUAN_TOP_CITIES = ['成都', '攀枝花', '德阳', '绵阳', '宜宾', '乐山', '眉山', '泸州', '自贡', '遂宁', '内江']
+# 四川省黑名单城市（分数虚高，待遇一般）
+SICHUAN_BLACKLIST_CITIES = ['德阳', '资阳', '内江', '广元', '巴中', '绵阳', '眉山']
 
 def filter_sichuan_gdp(province, title, content):
     """
-    如果是四川省的公告，检查标题和前段文本是否属于 Top GDP 城市。
-    如果都不是，则直接拦截。
+    如果是四川省的公告，检查是否命中了黑名单城市，或者三州的非州府所在地。
+    命中则拦截，否则放行。
     """
     if province != '四川':
         return True # 不是四川，放行
         
     text_to_check = title + (content[:500] if content else "")
     
-    # 只要包含任何一个白名单城市，或者说是全省联考/省属单位，就放行
-    if '省属' in text_to_check or '四川省' in title:
-        # 有些省级的也会带“四川省”，先大体放过，避免误杀省级好单位
-        pass
-        
-    for city in SICHUAN_TOP_CITIES:
+    # 1. 拦截明确指定的黑名单城市
+    for city in SICHUAN_BLACKLIST_CITIES:
         if city in text_to_check:
-            return True
+            print(f"❌ [地区拦截] {title} - 命中黑名单城市: {city} (分数虚高或待遇一般)")
+            return False
             
-    print(f"❌ [地区拦截] {title} - 四川非核心城市，直接过滤。")
-    return False
+    # 2. 拦截甘孜、阿坝、凉山的非州府所在地
+    # 只有明确提到州府（康定、马尔康、西昌）或州直属（州直、州属、州本级）才放行
+    prefectures = {
+        '甘孜': ['康定', '州直', '州属', '州本级'],
+        '阿坝': ['马尔康', '州直', '州属', '州本级'],
+        '凉山': ['西昌', '州直', '州属', '州本级']
+    }
+    
+    for pref, capitals in prefectures.items():
+        if pref in text_to_check:
+            is_capital_or_direct = any(cap in text_to_check for cap in capitals)
+            if not is_capital_or_direct:
+                print(f"❌ [地区拦截] {title} - 命中 {pref} 偏远地区（非州府所在地）")
+                return False
+                
+    return True
 
 def evaluate_notice(title, content):
     """
