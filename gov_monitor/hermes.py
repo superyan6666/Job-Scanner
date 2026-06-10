@@ -16,38 +16,17 @@ SILICONFLOW_API_KEY = os.environ.get('SILICONFLOW_API_KEY') or load_hermes_env()
 # 默认采用智谱 GLM-4 或 DeepSeek-V2.5，硅基流动接口目前支持 deepseek-ai/DeepSeek-V2.5
 SILICONFLOW_MODEL = os.environ.get('SILICONFLOW_MODEL', 'deepseek-ai/DeepSeek-V2.5')
 
-# 四川省黑名单城市及区县（深度避坑版，结合2026最新真实反馈）
-SICHUAN_BLACKLIST_KEYWORDS = [
-    # 城市级黑名单（分数虚高、待遇一般或整体拉胯）
-    '德阳', '资阳', '内江', '广元', '巴中', '绵阳', '眉山', 
-    
-    # 巴中所有区县
-    '巴州区', '通江县', '南江县', '平昌县',
-    
-    # 甘孜非州府（除康定外）
-    '石渠', '色达', '德格', '白玉', '理塘', '巴塘', '稻城', '乡城', 
-    '得荣', '雅江', '道孚', '炉霍', '甘孜县', '新龙',
-    
-    # 阿坝非州府（除马尔康外）
-    '壤塘', '阿坝县', '若尔盖', '红原', '松潘', '九寨沟', '金川', 
-    '小金', '黑水', '茂县', '汶川', '理县',
-    
-    # 凉山非州府（除西昌外）
-    '昭觉', '美姑', '布拖', '金阳', '雷波', '普格', '喜德', '越西', 
-    '甘洛', '冕宁', '盐源', '木里', '德昌', '会理', '会东', '宁南',
-    
-    # 其他零散区县避坑
-    '安岳', '乐至',  # 资阳市
-    '青神', '丹棱',  # 眉山市
-    '江油', '三台', '北川', '平武', '盐亭',  # 绵阳市
-    '资中', '隆昌', '威远',  # 内江市
-    '罗江', '中江',  # 德阳市
-    '苍溪', '旺苍', '剑阁', '青川',  # 广元市
-    '万源',  # 达州市交通闭塞县
-    
-    # 高危岗位特征
-    '乡镇', '基层服务'
-]
+# 动态加载 JSON 规则文件
+config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+try:
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config_data = json.load(f)
+        SICHUAN_BLACKLIST_KEYWORDS = config_data.get("SICHUAN_BLACKLIST_KEYWORDS", [])
+        PREFECTURES_RULES = config_data.get("PREFECTURES_RULES", {})
+except Exception as e:
+    print(f"加载 config.json 失败，降级为空规则: {e}")
+    SICHUAN_BLACKLIST_KEYWORDS = []
+    PREFECTURES_RULES = {}
 
 def filter_sichuan_gdp(province, title, content):
     """
@@ -65,13 +44,7 @@ def filter_sichuan_gdp(province, title, content):
             
     # 2. 拦截甘孜、阿坝、凉山的非州府所在地
     # 只有明确提到州府（康定、马尔康、西昌）或州直属（州直、州属、州本级）才放行
-    prefectures = {
-        '甘孜': ['康定', '州直', '州属', '州本级'],
-        '阿坝': ['马尔康', '州直', '州属', '州本级'],
-        '凉山': ['西昌', '州直', '州属', '州本级']
-    }
-    
-    for pref, capitals in prefectures.items():
+    for pref, capitals in PREFECTURES_RULES.items():
         if pref in title:
             is_capital_or_direct = any(cap in title for cap in capitals)
             if not is_capital_or_direct:

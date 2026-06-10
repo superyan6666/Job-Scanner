@@ -58,7 +58,12 @@ def parse_attachments(attachments):
                 try:
                     with pdfplumber.open(temp_filepath) as pdf:
                         for page in pdf.pages:
-                            tables = page.extract_tables()
+                            # 加入专门针对公考 PDF 歪斜表格的容错参数
+                            tables = page.extract_tables({
+                                "vertical_strategy": "lines",
+                                "horizontal_strategy": "lines",
+                                "intersection_tolerance": 15
+                            })
                             for table in tables:
                                 if not table: continue
                                 for row in table:
