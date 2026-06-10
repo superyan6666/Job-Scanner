@@ -1,44 +1,10 @@
 import requests
 from bs4 import BeautifulSoup
 import re
-import random
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'X-Forwarded-For': f"{random.randint(11,250)}.{random.randint(1,250)}.{random.randint(1,250)}.{random.randint(1,250)}",
-    'X-Real-IP': f"{random.randint(11,250)}.{random.randint(1,250)}.{random.randint(1,250)}.{random.randint(1,250)}"
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 }
-
-# 全局缓存的代理
-CURRENT_PROXY = None
-
-def get_working_proxy():
-    global CURRENT_PROXY
-    if CURRENT_PROXY:
-        return CURRENT_PROXY
-        
-    print("⏳ 正在从公开代理池抓取国内免付费代理...")
-    try:
-        url = 'https://proxylist.geonode.com/api/proxy-list?limit=15&page=1&sort_by=lastChecked&sort_type=desc&country=CN&protocols=http'
-        res = requests.get(url, timeout=10)
-        data = res.json().get('data', [])
-        for p in data:
-            proxy_url = f"http://{p['ip']}:{p['port']}"
-            proxies = {'http': proxy_url, 'https': proxy_url}
-            try:
-                # 尝试连接中公网，验证代理是否可用且不被拦截
-                test_res = requests.get('http://sc.offcn.com/', proxies=proxies, headers=HEADERS, timeout=3)
-                if test_res.status_code == 200:
-                    print(f"✅ 成功连接国内代理: {proxy_url}")
-                    CURRENT_PROXY = proxies
-                    return proxies
-            except Exception:
-                continue
-    except Exception as e:
-        print(f"⚠️ 代理池获取失败: {e}")
-        
-    print("⚠️ 无法获取可用代理，将尝试直连...")
-    return None
 
 # 抓取的栏目（这里以事业编招考信息为例，大部分编外也在这里或统称为招考信息）
 # 中公通常的路径
@@ -49,11 +15,10 @@ PATHS = [
 
 def fetch_notices_for_province(province_code, province_name):
     notices = []
-    proxy = get_working_proxy()
     for path in PATHS:
         url = f"http://{province_code}.offcn.com{path}"
         try:
-            res = requests.get(url, headers=HEADERS, proxies=proxy, timeout=15)
+            res = requests.get(url, headers=HEADERS, timeout=10)
             if res.status_code != 200:
                 continue
                 
@@ -113,9 +78,8 @@ def fetch_notices_for_province(province_code, province_name):
     return list(unique_notices.values())
 
 def fetch_article_content(url):
-    proxy = get_working_proxy()
     try:
-        res = requests.get(url, headers=HEADERS, proxies=proxy, timeout=15)
+        res = requests.get(url, headers=HEADERS, timeout=10)
         if res.status_code != 200:
             return ""
         soup = BeautifulSoup(res.content, 'html.parser')
