@@ -21,16 +21,31 @@ def main():
             title = notice['title']
             province = notice['province']
             
-            # 提取正文
-            content = fetch_article_content(url)
+            # 提取正文及附件
+            content_data = fetch_article_content(url)
+            content = content_data["text"]
+            attachments = content_data["attachments"]
             
-            # 鉴别层 1: 四川地市 GDP 过滤
+            # 鉴别层 1: 四川地市过滤（只看标题）
             if not filter_sichuan_gdp(province, title, content):
                 save_notice(url, title, province, notice['publish_date'])
                 continue
                 
+            # 鉴别层 1.5: 附件表格深度解析 (Phase 2)
+            extracted_rows = ""
+            if attachments:
+                from attachment_parser import parse_attachments
+                print(f"[{title}] 发现 {len(attachments)} 个附件，正在下载并精细化寻岗...")
+                extracted_rows = parse_attachments(attachments)
+                if extracted_rows:
+                    print(f"[{title}] 成功提取到匹配您专业的岗位行数据！")
+                    
             # 鉴别层 2: HERMES AI 简历匹配
-            if not evaluate_notice(title, content):
+            full_content_for_llm = content
+            if extracted_rows:
+                full_content_for_llm = content + "\n\n" + extracted_rows
+                
+            if not evaluate_notice(title, full_content_for_llm):
                 save_notice(url, title, province, notice['publish_date'])
                 continue
                 

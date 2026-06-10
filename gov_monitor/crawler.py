@@ -78,22 +78,53 @@ def fetch_notices_for_province(province_code, province_name):
     return list(unique_notices.values())
 
 def fetch_article_content(url):
+    """
+    抓取正文，同时提取所有的 xls/xlsx/pdf 附件下载链接。
+    返回格式： {"text": "正文内容...", "attachments": [{"name": "附件名", "url": "下载链接"}]}
+    """
     try:
         res = requests.get(url, headers=HEADERS, timeout=10)
         if res.status_code != 200:
-            return ""
+            return {"text": "", "attachments": []}
+            
+        # 注意编码问题
+        res.encoding = res.apparent_encoding
         soup = BeautifulSoup(res.content, 'html.parser')
+        
         content_div = soup.find('div', class_='zg_main') or \
                       soup.find('div', class_='offcn_content') or \
                       soup.find('div', class_='zgo_notice') or \
                       soup.find('div', class_='zoffcn_zw') or \
                       soup.find('div', class_='art_content')
+                      
+        result = {"text": "", "attachments": []}
+        
         if content_div:
-            return content_div.get_text(separator='\n', strip=True)
-        return ""
+            result["text"] = content_div.get_text(separator='\n', strip=True)
+            
+            # 提取附件链接
+            for a_tag in content_div.find_all('a', href=True):
+                href = a_tag['href']
+                if href.lower().endswith(('.xls', '.xlsx', '.pdf')):
+                    full_url = href
+                    if not href.startswith('http'):
+                        if href.startswith('//'):
+                            full_url = 'http:' + href
+                        elif href.startswith('/'):
+                            # 简单的域名拼接（中公网的省份站点）
+                            base = url.split('/')[0] + "//" + url.split('/')[2]
+                            full_url = base + href
+                        else:
+                            base_path = url.rsplit('/', 1)[0]
+                            full_url = base_path + '/' + href
+                            
+                    name = a_tag.text.strip() or "未命名附件"
+                    result["attachments"].append({"name": name, "url": full_url})
+                    
+        return result
     except Exception as e:
         print(f"提取正文失败 {url}: {e}")
-        return ""
+        return {"text": "", "attachments": []}
 
 def fetch_all():
     # 现在根据您的要求，仅保留四川和广东
