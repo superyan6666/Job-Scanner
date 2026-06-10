@@ -77,6 +77,24 @@ def fetch_notices_for_province(province_code, province_name):
         
     return list(unique_notices.values())
 
+def fetch_article_content(url):
+    try:
+        res = requests.get(url, headers=HEADERS, timeout=10)
+        if res.status_code != 200:
+            return ""
+        soup = BeautifulSoup(res.content, 'html.parser')
+        content_div = soup.find('div', class_='zg_main') or \
+                      soup.find('div', class_='offcn_content') or \
+                      soup.find('div', class_='zgo_notice') or \
+                      soup.find('div', class_='zoffcn_zw') or \
+                      soup.find('div', class_='art_content')
+        if content_div:
+            return content_div.get_text(separator='\n', strip=True)
+        return ""
+    except Exception as e:
+        print(f"提取正文失败 {url}: {e}")
+        return ""
+
 def fetch_all():
     # 现在根据您的要求，仅保留四川和广东
     targets = {
